@@ -16,6 +16,8 @@ import {
 import { logger } from "../../utils/logger";
 import { ProgressTracker } from "../../utils/progressTracker";
 import {
+  ensureDirSafeSync,
+  moveSafeSync,
   pathExistsSafeSync,
   resolveSafeChildPath,
   statSafeSync,
@@ -335,9 +337,17 @@ export class MissAVDownloader extends BaseDownloader {
         filenameTemplateSourceOptions,
       });
 
+      // Download to a short temp name to avoid Windows MAX_PATH failures on
+      // long templated filenames, then move to the final path after success.
+      const tempVideoPath = resolveSafeChildPath(
+        VIDEOS_DIR,
+        `missav_${timestamp}.${mergeOutputFormat}`,
+      );
+
       // 7. Download the video using yt-dlp with the m3u8 URL
       logger.info("Downloading video from m3u8 URL using yt-dlp:", m3u8Url);
-      logger.info("Downloading video to:", newVideoPath);
+      logger.info("Downloading video via temp path:", tempVideoPath);
+      logger.info("Final video path:", newVideoPath);
       logger.info("Download ID:", downloadId);
 
       if (downloadId) {
@@ -412,7 +422,7 @@ export class MissAVDownloader extends BaseDownloader {
       // Prepare flags object - merge user config with required settings
       const flags: any = {
         ...networkConfig, // Apply network settings (proxy, etc.)
-        output: newVideoPath,
+        output: tempVideoPath,
         format: downloadFormat,
         mergeOutputFormat: mergeOutputFormat,
         ...(canImpersonate ? { impersonate: "chrome" } : {}),
@@ -438,7 +448,7 @@ export class MissAVDownloader extends BaseDownloader {
       const cleanupTemporaryFilesOnce = async (): Promise<void> => {
         if (cleanedTemporaryFiles) return;
         cleanedTemporaryFiles = true;
-        await cleanupTemporaryFiles(newVideoPath);
+        await cleanupTemporaryFiles(tempVideoPath);
       };
       const shouldLogDownloadProgress = (line: string): boolean => {
         const now = Date.now();
@@ -539,6 +549,14 @@ export class MissAVDownloader extends BaseDownloader {
         });
 
         logger.info("Video downloaded successfully");
+
+        if (path.normalize(tempVideoPath) !== path.normalize(newVideoPath)) {
+          ensureDirSafeSync(path.dirname(newVideoPath), VIDEOS_DIR);
+          moveSafeSync(tempVideoPath, VIDEOS_DIR, newVideoPath, VIDEOS_DIR, {
+            overwrite: true,
+          });
+          logger.info("Moved MissAV download to final path:", newVideoPath);
+        }
       } catch (err: unknown) {
         // Use base class helper for cancellation handling
         const downloader = new MissAVDownloader();
@@ -554,7 +572,7 @@ export class MissAVDownloader extends BaseDownloader {
       try {
         downloader.throwIfCancelled(downloadId);
       } catch (error) {
-        await cleanupTemporaryFiles(newVideoPath);
+        await cleanupTemporaryFiles(tempVideoPath);
         throw error;
       }
 

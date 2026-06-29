@@ -38,6 +38,26 @@ import {
 import type { DownloadHistoryItem } from "./storageService";
 import * as storageService from "./storageService";
 
+function getDownloadErrorMessage(error: unknown): string {
+  const message = getErrorMessage(error);
+  if (!(error instanceof Error)) {
+    return message;
+  }
+
+  const stderrField = (error as unknown as { stderr?: unknown }).stderr;
+  const stderr = typeof stderrField === "string" ? stderrField.trim() : "";
+  if (!stderr) {
+    return message;
+  }
+
+  // yt-dlp's actual failure reason (403, ffmpeg missing, etc.) is usually here.
+  const maxChars = 1200;
+  const stderrTail =
+    stderr.length > maxChars ? stderr.slice(stderr.length - maxChars) : stderr;
+
+  return `${message}\n\n--- yt-dlp stderr (tail) ---\n${stderrTail}`;
+}
+
 class DownloadManager {
   private queue: DownloadTask[];
   private activeTasks: Map<string, DownloadTask>;
@@ -739,7 +759,7 @@ class DownloadManager {
           title: task.title,
           finishedAt: Date.now(),
           status: structuredResult?.partial === true ? PARTIAL_STATUS : "failed",
-          error: getErrorMessage(error),
+          error: getDownloadErrorMessage(error),
           sourceUrl: task.sourceUrl,
           platform: platformFromUrl(task.sourceUrl),
           sourceKind: task.statistics?.sourceKind ?? "unknown",
@@ -759,7 +779,7 @@ class DownloadManager {
           taskTitle: task.title,
           sourceUrl: task.sourceUrl,
           status: "fail",
-          error: getErrorMessage(error),
+          error: getDownloadErrorMessage(error),
         });
 
         import("./telegramService").then(({ TelegramService }) =>
@@ -767,7 +787,7 @@ class DownloadManager {
             taskTitle: task.title,
             status: "fail",
             sourceUrl: task.sourceUrl,
-            error: getErrorMessage(error),
+            error: getDownloadErrorMessage(error),
           })
         ).catch(() => {});
 
